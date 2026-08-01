@@ -1,7 +1,11 @@
 # main.py
 # The main entry point of our SentinelAI backend API.
 
-from fastapi import FastAPI, Depends, HTTPException, status
+import csv
+import io
+from datetime import datetime
+
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -20,10 +24,9 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="SentinelAI API",
     description="AI-Powered Security Operations Assistant.",
-    version="0.2.0",
+    version="0.3.0",
 )
 
-# Allow our Next.js frontend (port 3000) to call this backend.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -33,6 +36,7 @@ app.add_middleware(
 )
 
 
+# --- Basic health checks ---
 @app.get("/")
 def read_root():
     return {
@@ -47,6 +51,7 @@ def health_check():
     return {"status": "healthy"}
 
 
+# --- Authentication ---
 @app.post("/auth/register", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     existing = db.query(models.User).filter(models.User.email == user.email).first()
@@ -75,3 +80,90 @@ def login(credentials: schemas.LoginRequest, db: Session = Depends(get_db)):
 @app.get("/auth/me", response_model=schemas.UserOut)
 def get_me(current_user: models.User = Depends(get_current_user)):
     return current_user
+
+
+# --- Log upload & parsing ---
+@app.post("/logs/upload")
+def upload_logs(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Accept a CSV log file, parse each row, and store it in the database.
+
+    Expected CSV columns (header row required):
+    event_time, source_ip, username, event_type, status, port, country, password_sig
+    """
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a .csv file")
+
+    raw = file.file.read().decode("utf-8", errors="ignore")
+    reader = csv.DictReader(io.StringIO(raw))
+
+    required = {"event_time", "source_ip", "event_type"}
+    if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
+        raise HTTPException(
+            status_code=400,
+            detail="CSV must have at least these columns: event_time, source_ip, event_type",
+        )
+
+    saved, skipped = 0, 0
+    for row in reader:
+        try:
+            entry = models.LogEntry(
+                event_time=datetime.fromisoformat(row["event_time"].strip()),
+                source_ip=row["source_ip"].strip(),
+                username=(row.get("username") or "").strip() or None,
+                event_type=row["event_type"].strip(),
+                status=(row.get("status") or "").strip() or None,
+                port=int(row["port"]) if (row.get("port") or "").strip() else None,
+                country=(row.get("country") or "").strip() or None,
+                password_sig=(row.get("password_sig") or "").strip() or None,
+            )
+            db.add(entry)
+            saved += 1
+        except Exception:
+            skipped += 1  # a malformed line never crashes the upload
+
+    db.commit()
+    return {"message": "Upload complete", "rows_saved": saved, "rows_skipped": skipped}
+
+
+@app.get("/logs/count")
+def count_logs(db: Session = Depends(get_db)):
+    return {"total_log_entries": db.query(models.LogEntry).count()}
+
+# --- Threat detection (the core engine) ---
+import detection
+
+
+import ai_engine
+
+
+@app.post("/detect")
+def run_detection(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Run rule-based detection, then the Isolation Forest AI layer on top."""
+    rule_summary = detection.run_all(db)
+    ai_summary = ai_engine.run_ai(db)
+    return {"rules": rule_summary, "ai": ai_summary}
+
+
+@app.get("/alerts")
+def list_alerts(db: Session = Depends(get_db)):
+    alerts = db.query(models.Alert).order_by(models.Alert.risk_score.desc()).all()
+    return [
+        {
+            "id": a.id,
+            "attack_type": a.attack_type,
+            "source_ip": a.source_ip,
+            "username": a.username,
+            "risk_level": a.risk_level,
+            "risk_score": a.risk_score,
+            "evidence": a.evidence,
+            "recommendation": a.recommendation,
+        }
+        for a in alerts
+    ]
