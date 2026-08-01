@@ -1,11 +1,13 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function Home() {
   const [email, setEmail] = useState("rafi@example.com");
   const [password, setPassword] = useState("mysecret123");
   const [message, setMessage] = useState(null);
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   async function handleLogin(e) {
     e.preventDefault();
@@ -19,7 +21,9 @@ export default function Home() {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: "ok", text: "Access granted. Welcome to SentinelAI." });
+        localStorage.setItem("token", data.access_token);
+        setMessage({ type: "ok", text: "Access granted. Redirecting…" });
+        setTimeout(() => router.push("/dashboard"), 800);
       } else {
         setMessage({ type: "err", text: data.detail || "Login failed." });
       }
