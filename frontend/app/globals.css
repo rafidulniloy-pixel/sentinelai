@@ -71,3 +71,18 @@ body{
 .errbox{background:rgba(255,59,107,.12);border:1px solid rgba(255,59,107,.35);color:#ff8ca3;
   border-radius:10px;padding:11px 14px;font-size:13px;margin-bottom:16px}
 @media(max-width:760px){.kpirow{grid-template-columns:repeat(2,1fr)}}
+
+/* ---------- AI explanation panel ---------- */
+.whybtn{margin-top:12px;padding:8px 14px;border:1px solid rgba(56,189,248,.35);border-radius:9px;
+  cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--cyan);
+  background:rgba(56,189,248,.08);transition:.2s}
+.whybtn:hover{background:rgba(56,189,248,.16)}
+.xp{margin-top:12px;background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.28);
+  border-radius:12px;padding:15px 16px}
+.xp .hl{color:var(--cyan);font-size:13.5px;font-weight:600;line-height:1.5;margin-bottom:12px;
+  display:flex;align-items:flex-start;gap:8px}
+.xp .row{margin-bottom:10px;font-size:12.8px;line-height:1.65}
+.xp .row .k{color:var(--muted);font-weight:600;display:block;margin-bottom:2px;
+  font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.xp .urg{display:inline-block;margin-top:4px;font-size:11px;font-weight:700;padding:4px 10px;
+  border-radius:6px;background:rgba(255,59,107,.14);color:#ff8ca3;border:1px solid rgba(255,59,107,.3)}

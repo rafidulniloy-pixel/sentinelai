@@ -151,8 +151,18 @@ def run_detection(
     return {"rules": rule_summary, "ai": ai_summary}
 
 
+# Import our explanation engine (the ExplainabilityEngine from the CO2 design).
+import explain
+
+
 @app.get("/alerts")
 def list_alerts(db: Session = Depends(get_db)):
+    """
+    Return every alert, highest risk first.
+
+    Each alert now also carries an 'explanation' object generated on the fly by
+    explain.py, so the dashboard can answer "Why is this High risk?" instantly.
+    """
     alerts = db.query(models.Alert).order_by(models.Alert.risk_score.desc()).all()
     return [
         {
@@ -164,6 +174,29 @@ def list_alerts(db: Session = Depends(get_db)):
             "risk_score": a.risk_score,
             "evidence": a.evidence,
             "recommendation": a.recommendation,
+            # NEW: the plain-language explanation for non-expert analysts.
+            "explanation": explain.generate_explanation(a),
         }
         for a in alerts
     ]
+
+
+@app.get("/alerts/{alert_id}/explain")
+def explain_alert(alert_id: int, db: Session = Depends(get_db)):
+    """
+    Explain ONE specific alert.
+
+    This matches the 'Generate AI Explanation' use case in our CO2 use-case
+    diagram, which is included by both 'Inspect Alert Detail' and
+    'Generate Incident Report'.
+    """
+    alert = db.query(models.Alert).filter(models.Alert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {
+        "alert_id": alert.id,
+        "attack_type": alert.attack_type,
+        "risk_level": alert.risk_level,
+        "risk_score": alert.risk_score,
+        "explanation": explain.generate_explanation(alert),
+    }
