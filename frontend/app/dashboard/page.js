@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import AlertCharts from "../AlertCharts";
 
-// The address of our FastAPI backend.
+// Address of our FastAPI backend.
 const API = "http://localhost:8000";
 
 export default function Dashboard() {
@@ -18,6 +19,7 @@ export default function Dashboard() {
   // --- Load alerts + log count from the backend -----------------------------
   async function loadData() {
     try {
+      // Fetch both at the same time for speed.
       const [aRes, cRes] = await Promise.all([
         fetch(`${API}/alerts`),
         fetch(`${API}/logs/count`),
@@ -81,8 +83,16 @@ export default function Dashboard() {
         router.push("/");
         return;
       }
+      // Show the REAL reason if it fails, so problems are easy to diagnose.
       if (!res.ok) {
-        setError("No report available yet - run detection first.");
+        let detail = "";
+        try {
+          const data = await res.json();
+          detail = data.detail || "";
+        } catch {
+          detail = "";
+        }
+        setError(`Report failed (HTTP ${res.status}). ${detail}`);
         return;
       }
       // Turn the PDF response into a file the browser downloads.
@@ -128,6 +138,7 @@ export default function Dashboard() {
             <button className="btnsm" onClick={runDetection} disabled={busy}>
               {busy ? "Scanning…" : "Run detection"}
             </button>
+            <button className="btnghost" onClick={() => router.push("/upload")}>Upload logs</button>
             <button className="btnghost" onClick={downloadReport}>Download report</button>
             <button className="btnghost" onClick={logout}>Log out</button>
           </div>
@@ -154,6 +165,9 @@ export default function Dashboard() {
             <div className="num" style={{ color: "#ffce78" }}>{medium}</div>
           </div>
         </div>
+
+        {/* Charts: risk distribution + alerts by attack type */}
+        <AlertCharts alerts={alerts} />
 
         {/* Alert list */}
         <div className="alist">

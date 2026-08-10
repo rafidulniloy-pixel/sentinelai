@@ -3,14 +3,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function Home() {
+  // --- Form state -----------------------------------------------------------
   const [email, setEmail] = useState("rafi@example.com");
   const [password, setPassword] = useState("mysecret123");
-  const [message, setMessage] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState(null);   // success or error message
+  const [loading, setLoading] = useState(false);  // true while logging in
   const router = useRouter();
 
+  // --- Send the credentials to the backend ----------------------------------
   async function handleLogin(e) {
-    e.preventDefault();
+    e.preventDefault();   // stop the browser reloading the page
     setMessage(null);
     setLoading(true);
     try {
@@ -20,7 +22,9 @@ export default function Home() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
+
       if (res.ok) {
+        // Save the JWT so protected pages (dashboard, upload) can use it.
         localStorage.setItem("token", data.access_token);
         setMessage({ type: "ok", text: "Access granted. Redirecting…" });
         setTimeout(() => router.push("/dashboard"), 800);
@@ -36,19 +40,6 @@ export default function Home() {
 
   return (
     <>
-      <svg className="bg" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid slice">
-        <g fill="none" stroke="rgba(120,160,230,.16)">
-          <circle cx="500" cy="500" r="230" />
-          <circle cx="500" cy="500" r="330" />
-          <circle cx="500" cy="500" r="440" />
-        </g>
-        <g fill="none" stroke="rgba(59,130,246,.35)" strokeWidth="2" strokeDasharray="6 14">
-          <circle cx="500" cy="500" r="380">
-            <animateTransform attributeName="transform" type="rotate" from="0 500 500" to="360 500 500" dur="60s" repeatCount="indefinite" />
-          </circle>
-        </g>
-      </svg>
-
       <div className="brand">
         <span className="m">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#04121a" strokeWidth="2.4"><path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5l-8-3Z" /></svg>
@@ -58,6 +49,7 @@ export default function Home() {
 
       <div className="login">
         <form className="card" onSubmit={handleLogin}>
+          {/* Biometric fingerprint scanner graphic */}
           <svg className="hud" viewBox="0 0 220 220">
             <g fill="none" stroke="var(--blue)" strokeWidth="2" strokeDasharray="4 10" opacity=".85">
               <circle cx="110" cy="110" r="100">
@@ -84,6 +76,7 @@ export default function Home() {
               <path d="M21.8 16c.2-2 .13-5.35 0-6" />
               <path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2" />
             </g>
+            {/* The red scan line sweeping over the fingerprint */}
             <line x1="72" y1="110" x2="148" y2="110" stroke="var(--red)" strokeWidth="2" opacity=".9">
               <animateTransform attributeName="transform" type="translate" values="0 -20; 0 22; 0 -20" dur="3.2s" repeatCount="indefinite" />
               <animate attributeName="opacity" values="0;.9;0" dur="3.2s" repeatCount="indefinite" />
