@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AlertCharts from "../AlertCharts";
+import NavBar from "../NavBar";
 
 // Address of our FastAPI backend.
 const API = "http://localhost:8000";
@@ -10,16 +11,19 @@ export default function Dashboard() {
   const router = useRouter();
 
   // --- Page state -----------------------------------------------------------
-  const [alerts, setAlerts] = useState([]);      // the list of detected alerts
+  const [alerts, setAlerts] = useState([]);      // all alerts from the backend
   const [logCount, setLogCount] = useState(0);   // how many log rows are stored
   const [busy, setBusy] = useState(false);       // true while detection is running
   const [error, setError] = useState(null);      // any error message to show
   const [openId, setOpenId] = useState(null);    // which alert's explanation is open
 
+  // --- Filter state (CO2 use case: "Filter & Search Alerts") ---------------
+  const [query, setQuery] = useState("");            // free-text search
+  const [riskFilter, setRiskFilter] = useState("All"); // All / High / Medium / Low
+
   // --- Load alerts + log count from the backend -----------------------------
   async function loadData() {
     try {
-      // Fetch both at the same time for speed.
       const [aRes, cRes] = await Promise.all([
         fetch(`${API}/alerts`),
         fetch(`${API}/logs/count`),
@@ -33,14 +37,12 @@ export default function Dashboard() {
     }
   }
 
-  // Run once when the page first opens.
   useEffect(() => {
     loadData();
   }, []);
 
   // --- Run the detection engine (rules + Isolation Forest AI) ---------------
   async function runDetection() {
-    // This endpoint is protected, so we need the JWT saved at login.
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/");
@@ -53,13 +55,12 @@ export default function Dashboard() {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
-      // 401 means our token expired - send the user back to log in again.
       if (res.status === 401) {
         router.push("/");
         return;
       }
       await res.json();
-      await loadData();   // refresh the screen with the new alerts
+      await loadData();
     } catch {
       setError("Detection failed. Is the backend running?");
     } finally {
@@ -83,7 +84,6 @@ export default function Dashboard() {
         router.push("/");
         return;
       }
-      // Show the REAL reason if it fails, so problems are easy to diagnose.
       if (!res.ok) {
         let detail = "";
         try {
@@ -95,7 +95,6 @@ export default function Dashboard() {
         setError(`Report failed (HTTP ${res.status}). ${detail}`);
         return;
       }
-      // Turn the PDF response into a file the browser downloads.
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -108,25 +107,36 @@ export default function Dashboard() {
     }
   }
 
-  function logout() {
-    localStorage.removeItem("token");
-    router.push("/");
-  }
-
-  // --- Small helpers --------------------------------------------------------
+  // --- KPI counts (always based on ALL alerts, not the filtered view) -------
   const high = alerts.filter((a) => a.risk_level === "High").length;
   const medium = alerts.filter((a) => a.risk_level === "Medium").length;
+
+  // --- Apply the filters ----------------------------------------------------
+  // An alert is shown when it matches BOTH the risk filter and the search text.
+  const q = query.trim().toLowerCase();
+  const visibleAlerts = alerts.filter((a) => {
+    const matchesRisk = riskFilter === "All" || a.risk_level === riskFilter;
+    const matchesQuery =
+      !q ||
+      [a.attack_type, a.source_ip, a.username, a.evidence]
+        .filter(Boolean)                       // ignore null fields
+        .some((field) => String(field).toLowerCase().includes(q));
+    return matchesRisk && matchesQuery;
+  });
+
+  const filtersActive = q !== "" || riskFilter !== "All";
+
+  function clearFilters() {
+    setQuery("");
+    setRiskFilter("All");
+  }
+
   const pill = (lvl) =>
     lvl === "High" ? "pill p-hi" : lvl === "Medium" ? "pill p-md" : "pill p-lo";
 
   return (
     <>
-      <div className="brand">
-        <span className="m">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#04121a" strokeWidth="2.4"><path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5l-8-3Z" /></svg>
-        </span>
-        SentinelAI
-      </div>
+      <NavBar />
 
       <div className="dash">
         <div className="dhead">
@@ -138,15 +148,13 @@ export default function Dashboard() {
             <button className="btnsm" onClick={runDetection} disabled={busy}>
               {busy ? "Scanning…" : "Run detection"}
             </button>
-            <button className="btnghost" onClick={() => router.push("/upload")}>Upload logs</button>
             <button className="btnghost" onClick={downloadReport}>Download report</button>
-            <button className="btnghost" onClick={logout}>Log out</button>
           </div>
         </div>
 
         {error && <div className="errbox">{error}</div>}
 
-        {/* Summary cards */}
+        {/* Summary cards - these always reflect the full alert set */}
         <div className="kpirow">
           <div className="kcard">
             <div className="lbl">Logs analyzed</div>
@@ -166,8 +174,48 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Charts: risk distribution + alerts by attack type */}
+        {/* Charts also show the full picture, so filtering the list below
+            never hides the overall context. */}
         <AlertCharts alerts={alerts} />
+
+        {/* Filter and search bar */}
+        {alerts.length > 0 && (
+          <>
+            <div className="filterbar">
+              <div className="searchwrap">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+                <input
+                  type="text"
+                  placeholder="Search by attack type, IP, account or evidence…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+
+              <div className="segs">
+                {["All", "High", "Medium", "Low"].map((level) => (
+                  <button
+                    key={level}
+                    className={`seg ${riskFilter === level ? "on" : ""}`}
+                    onClick={() => setRiskFilter(level)}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="resultcount">
+              Showing {visibleAlerts.length} of {alerts.length} alerts
+              {filtersActive && (
+                <span className="clearlink" onClick={clearFilters}>Clear filters</span>
+              )}
+            </div>
+          </>
+        )}
 
         {/* Alert list */}
         <div className="alist">
@@ -177,7 +225,13 @@ export default function Dashboard() {
             </div>
           )}
 
-          {alerts.map((a) => (
+          {alerts.length > 0 && visibleAlerts.length === 0 && (
+            <div className="empty">
+              No alerts match your filters. <span className="clearlink" onClick={clearFilters}>Clear filters</span>
+            </div>
+          )}
+
+          {visibleAlerts.map((a) => (
             <div className="acard" key={a.id}>
               <div className="top">
                 <span className={pill(a.risk_level)}>{a.risk_level}</span>
@@ -191,7 +245,6 @@ export default function Dashboard() {
               <div className="ev">{a.evidence}</div>
               <div className="rec"><b>Recommended:</b> {a.recommendation}</div>
 
-              {/* Toggle button: opens/closes the AI explanation for this alert */}
               <button
                 className="whybtn"
                 onClick={() => setOpenId(openId === a.id ? null : a.id)}
@@ -201,7 +254,6 @@ export default function Dashboard() {
                   : `Why is this ${a.risk_level} risk?`}
               </button>
 
-              {/* The AI explanation panel (only shown when this alert is open) */}
               {openId === a.id && a.explanation && (
                 <div className="xp">
                   <div className="hl">

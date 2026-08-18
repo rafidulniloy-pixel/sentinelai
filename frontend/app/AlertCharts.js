@@ -1,15 +1,3 @@
-// AlertCharts.js
-// =============================================================================
-// Dashboard charts (MVP Feature 4: "Risk distribution / Charts")
-//
-// TWO CHARTS:
-//   1. Doughnut - how alerts split across High / Medium / Low risk
-//   2. Bar      - how many alerts of each attack type were found
-//
-// NOTE ON COLOURS: a canvas cannot read our CSS variables, so chart colours
-// are written as plain hex values that match our dark theme.
-// =============================================================================
-
 "use client";
 
 import { Doughnut, Bar } from "react-chartjs-2";
@@ -26,7 +14,7 @@ import {
 // Chart.js is modular: we must register the pieces we actually use.
 ChartJS.register(ArcElement, BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 
-// Theme colours reused by both charts.
+// Theme colours (a canvas cannot read CSS variables, so these are plain hex).
 const COLOR_HIGH = "#ff3b6b";
 const COLOR_MEDIUM = "#ffb020";
 const COLOR_LOW = "#31d67f";
@@ -37,7 +25,7 @@ export default function AlertCharts({ alerts }) {
   // Nothing to draw until detection has produced alerts.
   if (!alerts || alerts.length === 0) return null;
 
-  // --- Chart 1 data: count alerts per risk level ---------------------------
+  // --- Chart 1: count alerts per risk level --------------------------------
   const high = alerts.filter((a) => a.risk_level === "High").length;
   const medium = alerts.filter((a) => a.risk_level === "Medium").length;
   const low = alerts.filter((a) => a.risk_level === "Low").length;
@@ -48,28 +36,25 @@ export default function AlertCharts({ alerts }) {
       {
         data: [high, medium, low],
         backgroundColor: [COLOR_HIGH, COLOR_MEDIUM, COLOR_LOW],
-        borderColor: "rgba(11,17,30,0.9)",   // dark gap between segments
+        borderColor: "rgba(11,17,30,0.9)",
         borderWidth: 3,
         hoverOffset: 6,
       },
     ],
   };
 
-  // --- Chart 2 data: count alerts per attack type --------------------------
-  // Build a { "Brute Force Attack": 3, "Port Scanning": 1, ... } tally.
+  // --- Chart 2: count alerts per attack type -------------------------------
   const tally = {};
   alerts.forEach((a) => {
     tally[a.attack_type] = (tally[a.attack_type] || 0) + 1;
   });
-  const attackLabels = Object.keys(tally);
-  const attackCounts = Object.values(tally);
 
   const attackData = {
-    labels: attackLabels,
+    labels: Object.keys(tally),
     datasets: [
       {
         label: "Alerts",
-        data: attackCounts,
+        data: Object.values(tally),
         backgroundColor: "#3b82f6",
         hoverBackgroundColor: "#7c5cff",
         borderRadius: 6,
@@ -78,11 +63,11 @@ export default function AlertCharts({ alerts }) {
     ],
   };
 
-  // --- Shared options ------------------------------------------------------
+  // --- Chart options -------------------------------------------------------
   const doughnutOptions = {
     responsive: true,
     maintainAspectRatio: false,
-    cutout: "62%",                       // makes it a ring, not a pie
+    cutout: "62%",
     plugins: {
       legend: {
         position: "bottom",
@@ -94,7 +79,7 @@ export default function AlertCharts({ alerts }) {
   const barOptions = {
     responsive: true,
     maintainAspectRatio: false,
-    indexAxis: "y",                      // horizontal bars fit long attack names
+    indexAxis: "y",
     plugins: { legend: { display: false } },
     scales: {
       x: {

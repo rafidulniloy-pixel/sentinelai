@@ -112,7 +112,10 @@ export default function Home() {
 
           {message && <p className={`msg ${message.type}`}>{message.text}</p>}
 
-          <p className="foot">No account yet? <a>Request access</a></p>
+          <p className="foot">
+            No account yet?{" "}
+            <a onClick={() => router.push("/register")}>Request access</a>
+          </p>
         </form>
       </div>
     </>

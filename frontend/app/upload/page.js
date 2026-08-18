@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import NavBar from "../NavBar";
 
 // Address of our FastAPI backend.
 const API = "http://localhost:8000";
@@ -68,23 +69,14 @@ export default function UploadPage() {
 
   return (
     <>
-      <div className="brand">
-        <span className="m">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#04121a" strokeWidth="2.4"><path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5l-8-3Z" /></svg>
-        </span>
-        SentinelAI
-      </div>
+      {/* Persistent navigation bar (Dashboard / Upload / Log out) */}
+      <NavBar />
 
       <div className="dash">
         <div className="dhead">
           <div>
             <h1>Upload security logs</h1>
             <div className="sub">Supported formats: CSV · JSON · Apache/Nginx access log</div>
-          </div>
-          <div className="toolbar">
-            <button className="btnghost" onClick={() => router.push("/dashboard")}>
-              Back to dashboard
-            </button>
           </div>
         </div>
 
