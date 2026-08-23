@@ -151,101 +151,21 @@ body{
   align-items:center;gap:10px}
 .clearlink{color:var(--cyan);cursor:pointer;font-weight:500}
 
-/* ---------- Alert filter and search bar ---------- */
-.filterbar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
-
-.searchwrap {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(255, 255, 255, .04);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 12px 16px;
-  flex: 1;
-  min-width: 260px;
-  transition: .2s;
-}
-
-.searchwrap:focus-within {
-  border-color: var(--cyan);
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, .14);
-}
-
-.searchwrap svg {
-  color: var(--muted);
-  flex: none;
-}
-
-.searchwrap input {
-  flex: 1;
-  background: transparent;
-  border: 0;
-  outline: 0;
-  color: var(--text);
-  font-size: 13.5px;
-  font-family: inherit;
-}
-
-.searchwrap input::placeholder {
-  color: var(--muted);
-}
-
-.segs {
-  display: flex;
-  gap: 5px;
-  background: rgba(255, 255, 255, .04);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 5px;
-  flex: none;
-}
-
-.seg {
-  padding: 8px 18px;
-  border: 0;
-  border-radius: 8px;
+/* ---------- MITRE ATT&CK technique badge ---------- */
+.mitre {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: rgba(124, 92, 255, .14);
+  color: #c4b5fd;
+  border: 1px solid rgba(124, 92, 255, .32);
+  text-decoration: none;
   cursor: pointer;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
-  background: transparent;
   transition: .18s;
 }
 
-.seg:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, .05);
-}
-
-.seg.on {
-  color: #fff;
-  background: linear-gradient(120deg, var(--blue), var(--purple));
-  box-shadow: 0 4px 14px rgba(59, 130, 246, .3);
-}
-
-.resultcount {
-  font-size: 12.5px;
-  color: var(--muted);
-  margin-bottom: 16px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.clearlink {
-  color: var(--cyan);
-  cursor: pointer;
-  font-weight: 500;
-}
-
-.clearlink:hover {
-  text-decoration: underline;
+.mitre:hover {
+  background: rgba(124, 92, 255, .26);
+  color: #ddd6fe;
 }

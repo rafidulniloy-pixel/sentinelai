@@ -18,7 +18,7 @@ export default function Dashboard() {
   const [openId, setOpenId] = useState(null);    // which alert's explanation is open
 
   // --- Filter state (CO2 use case: "Filter & Search Alerts") ---------------
-  const [query, setQuery] = useState("");            // free-text search
+  const [query, setQuery] = useState("");              // free-text search
   const [riskFilter, setRiskFilter] = useState("All"); // All / High / Medium / Low
 
   // --- Load alerts + log count from the backend -----------------------------
@@ -112,14 +112,13 @@ export default function Dashboard() {
   const medium = alerts.filter((a) => a.risk_level === "Medium").length;
 
   // --- Apply the filters ----------------------------------------------------
-  // An alert is shown when it matches BOTH the risk filter and the search text.
   const q = query.trim().toLowerCase();
   const visibleAlerts = alerts.filter((a) => {
     const matchesRisk = riskFilter === "All" || a.risk_level === riskFilter;
     const matchesQuery =
       !q ||
       [a.attack_type, a.source_ip, a.username, a.evidence]
-        .filter(Boolean)                       // ignore null fields
+        .filter(Boolean)
         .some((field) => String(field).toLowerCase().includes(q));
     return matchesRisk && matchesQuery;
   });
@@ -129,6 +128,10 @@ export default function Dashboard() {
   function clearFilters() {
     setQuery("");
     setRiskFilter("All");
+  }
+
+  function openMitre(url) {
+    window.open(url, "_blank");
   }
 
   const pill = (lvl) =>
@@ -174,7 +177,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Charts also show the full picture, so filtering the list below
+        {/* Charts show the full picture, so filtering the list below
             never hides the overall context. */}
         <AlertCharts alerts={alerts} />
 
@@ -227,7 +230,8 @@ export default function Dashboard() {
 
           {alerts.length > 0 && visibleAlerts.length === 0 && (
             <div className="empty">
-              No alerts match your filters. <span className="clearlink" onClick={clearFilters}>Clear filters</span>
+              No alerts match your filters.{" "}
+              <span className="clearlink" onClick={clearFilters}>Clear filters</span>
             </div>
           )}
 
@@ -236,6 +240,18 @@ export default function Dashboard() {
               <div className="top">
                 <span className={pill(a.risk_level)}>{a.risk_level}</span>
                 <span className="atk">{a.attack_type}</span>
+
+                {/* MITRE ATT&CK technique badge - click opens the official page */}
+                {a.explanation && a.explanation.mitre && (
+                  <span
+                    className="mitre"
+                    onClick={() => openMitre(a.explanation.mitre.url)}
+                    title={a.explanation.mitre.name}
+                  >
+                    {a.explanation.mitre.id}
+                  </span>
+                )}
+
                 <span className="ip">
                   {a.source_ip}{a.username ? ` · ${a.username}` : ""}
                 </span>
@@ -278,6 +294,14 @@ export default function Dashboard() {
                     <span className="k">What the AI model thought</span>
                     {a.explanation.ai_view}
                   </div>
+
+                  {a.explanation.mitre && (
+                    <div className="row">
+                      <span className="k">MITRE ATT&amp;CK technique</span>
+                      {a.explanation.mitre.id} — {a.explanation.mitre.name} (
+                      {a.explanation.mitre.tactic})
+                    </div>
+                  )}
 
                   <div className="row">
                     <span className="k">Recommended action</span>

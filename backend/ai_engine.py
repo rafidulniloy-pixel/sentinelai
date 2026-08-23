@@ -1,8 +1,18 @@
 # ai_engine.py
-# The AI layer: Isolation Forest anomaly detection + risk-score fusion.
+# =============================================================================
+# The AI layer: Isolation Forest anomaly detection + risk fusion + SHAP.
+#
 # Design (from our CO2 report): final risk = 100 * (0.6 * anomaly + 0.4 * rule/100)
-# Fusion rule: the AI can RAISE an alert's risk, but never lower a confirmed rule
-# detection (the AI is an escalator, not a de-escalator).
+# Fusion rule: the AI can RAISE an alert's risk, but never lower a confirmed
+# rule detection (the AI is an escalator, not a de-escalator).
+#
+# NEW - FEATURE ATTRIBUTION WITH SHAP:
+#   An anomaly score alone tells an analyst THAT something is unusual, not WHY.
+#   SHAP (SHapley Additive exPlanations) decomposes the model's decision into a
+#   contribution per feature, so we can name the behaviours that triggered the
+#   flag - e.g. "distinct ports touched (14)". This turns our explainability
+#   from descriptive into model-grounded.
+# =============================================================================
 
 from collections import defaultdict
 
@@ -12,9 +22,19 @@ from sqlalchemy.orm import Session
 
 import models
 
-W_ANOMALY = 0.6   # weight of the AI anomaly score
-W_RULES = 0.4     # weight of the rule-based score
-AI_ONLY_THRESHOLD = 0.80  # IPs above this with no rule alert still get flagged
+W_ANOMALY = 0.6            # weight of the AI anomaly score
+W_RULES = 0.4              # weight of the rule-based score
+AI_ONLY_THRESHOLD = 0.80   # IPs above this with no rule alert still get flagged
+
+# Human-readable names for the six features, in the SAME ORDER as _build_features.
+FEATURE_LABELS = [
+    "total events",
+    "failed logins",
+    "distinct accounts targeted",
+    "distinct ports touched",
+    "distinct countries",
+    "event rate per second",
+]
 
 
 def _risk_level(score: int) -> str:
@@ -26,7 +46,7 @@ def _risk_level(score: int) -> str:
 
 
 def _build_features(logs):
-    """One 'behavior fingerprint' per source IP."""
+    """One 'behaviour fingerprint' per source IP."""
     per_ip = defaultdict(list)
     for e in logs:
         per_ip[e.source_ip].append(e)
@@ -40,10 +60,46 @@ def _build_features(logs):
         n_users = len({e.username for e in events if e.username})
         n_ports = len({e.port for e in events if e.port})
         n_countries = len({e.country for e in events if e.country})
-        rate = n_events / span  # events per second (speed)
+        rate = n_events / span
         ips.append(ip)
         rows.append([n_events, n_failed, n_users, n_ports, n_countries, rate])
     return ips, np.array(rows)
+
+
+def _compute_drivers(forest, X, ips):
+    """
+    Use SHAP to find WHICH features pushed each IP towards 'anomalous'.
+
+    For Isolation Forest, a NEGATIVE SHAP value means that feature shortened the
+    isolation path - i.e. it made the point look more anomalous. So we sort
+    ascending and take the most negative contributions.
+
+    Returns {ip: "feature (value), feature (value)"}. If SHAP is unavailable or
+    errors, we return an empty dict and the rest of the system carries on
+    unchanged - attribution is a bonus, never a hard dependency.
+    """
+    try:
+        import shap
+        explainer = shap.TreeExplainer(forest)
+        shap_values = np.array(explainer.shap_values(X))
+    except Exception:
+        return {}
+
+    drivers = {}
+    for idx, ip in enumerate(ips):
+        row = shap_values[idx]
+        order = np.argsort(row)          # most negative (most anomalous) first
+        parts = []
+        for j in order[:2]:              # name the top two drivers
+            if row[j] >= 0:
+                continue                 # this feature argued for "normal"
+            value = X[idx][j]
+            # The last feature (rate) is a decimal; the rest are counts.
+            shown = f"{value:.2f}" if j == len(FEATURE_LABELS) - 1 else f"{int(value)}"
+            parts.append(f"{FEATURE_LABELS[j]} ({shown})")
+        if parts:
+            drivers[ip] = ", ".join(parts)
+    return drivers
 
 
 def run_ai(db: Session):
@@ -58,12 +114,16 @@ def run_ai(db: Session):
 
     forest = IsolationForest(n_estimators=100, contamination="auto", random_state=42)
     forest.fit(X)
-    raw = -forest.score_samples(X)  # higher = more anomalous
+
+    raw = -forest.score_samples(X)       # higher = more anomalous
     a_min, a_max = raw.min(), raw.max()
     norm = (raw - a_min) / (a_max - a_min) if a_max > a_min else np.zeros_like(raw)
     anomaly = {ip: float(s) for ip, s in zip(ips, norm)}
 
-    # --- Fuse AI scores into existing rule-based alerts (escalate only) ---
+    # Feature attribution for every IP (empty dict if SHAP is unavailable).
+    drivers = _compute_drivers(forest, X, ips)
+
+    # --- Fuse AI scores into existing rule-based alerts (escalate only) -------
     updated = 0
     alerts = db.query(models.Alert).all()
     alerted_ips = set()
@@ -71,11 +131,13 @@ def run_ai(db: Session):
         if not alert.source_ip:
             continue
         candidates = [p.strip() for p in alert.source_ip.split(",")]
-        scores = [anomaly[p] for p in candidates if p in anomaly]
         alerted_ips.update(candidates)
-        if not scores:
+
+        scored = [(p, anomaly[p]) for p in candidates if p in anomaly]
+        if not scored:
             continue
-        a = max(scores)
+        best_ip, a = max(scored, key=lambda pair: pair[1])
+
         fused = max(
             alert.risk_score,
             round(100 * (W_ANOMALY * a + W_RULES * (alert.risk_score / 100))),
@@ -83,19 +145,26 @@ def run_ai(db: Session):
         alert.risk_score = fused
         alert.risk_level = _risk_level(fused)
         alert.evidence = f"{alert.evidence} | AI anomaly score: {a:.2f}"
+
+        # Append the SHAP attribution so the explanation engine can report it.
+        if best_ip in drivers:
+            alert.evidence += f" | AI drivers: {drivers[best_ip]}"
         updated += 1
 
-    # --- Flag highly anomalous IPs the rules did NOT catch ---
+    # --- Flag highly anomalous IPs the rules did NOT catch -------------------
     ai_flagged = 0
     for ip, a in anomaly.items():
         if a >= AI_ONLY_THRESHOLD and ip not in alerted_ips:
             score = round(100 * (W_ANOMALY * a))
+            evidence = (f"Isolation Forest flagged unusual behaviour (anomaly {a:.2f}) "
+                        f"not matching any known rule pattern")
+            if ip in drivers:
+                evidence += f" | AI drivers: {drivers[ip]}"
             db.add(models.Alert(
                 attack_type="Anomalous Activity (AI)",
                 source_ip=ip, username=None,
                 risk_level=_risk_level(score), risk_score=score,
-                evidence=f"Isolation Forest flagged unusual behavior (anomaly {a:.2f}) "
-                         f"not matching any known rule pattern",
+                evidence=evidence,
                 recommendation=f"Investigate {ip}: review its recent events manually.",
             ))
             ai_flagged += 1
@@ -105,4 +174,5 @@ def run_ai(db: Session):
         "ips_analyzed": len(ips),
         "alerts_updated_with_ai": updated,
         "ai_only_flags": ai_flagged,
+        "shap_attribution": "enabled" if drivers else "unavailable",
     }

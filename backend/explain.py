@@ -2,32 +2,63 @@
 # =============================================================================
 # The ExplainabilityEngine (from our CO2 design report).
 #
-# PURPOSE:
-#   Convert a technical alert into a plain-language explanation that a
-#   non-expert can act on. This answers the user's question:
-#   "Why is this alert High risk?"
+# Converts a technical alert into a plain-language explanation that a
+# non-expert can act on, answering: "Why is this alert High risk?"
 #
-# DESIGN DECISION (important for the report):
-#   We use a DETERMINISTIC TEMPLATE generator, not an LLM API, because:
-#     1. Our CO1 proposal flagged "LLM-dependency risk" (cost + availability)
-#        and promised a template-based fallback. This IS that fallback.
-#     2. It works offline, is free, is instant, and never fails.
-#     3. It is reproducible - the same alert always gives the same wording,
-#        which matters for a security audit trail.
-#   An LLM can later be added ON TOP of this (see generate_explanation()).
+# DESIGN DECISION: this is a DETERMINISTIC TEMPLATE generator, not an LLM.
+#   Our CO1 proposal flagged "LLM-dependency risk" (cost + availability) and
+#   promised a template-based fallback. This IS that fallback: offline, free,
+#   instant, and reproducible - the same alert always gives the same wording,
+#   which matters for a security audit trail.
 #
-# NOTE: explanations are generated ON READ (not stored in the database).
-#   This keeps the database schema unchanged and guarantees the explanation
-#   always matches the alert's current risk score.
+# NEW - MITRE ATT&CK MAPPING:
+#   Each attack type is mapped to its official ATT&CK technique ID. ATT&CK is
+#   the industry-standard catalogue of adversary behaviour, so this lets our
+#   alerts be cross-referenced with professional tooling and threat reports.
 # =============================================================================
 
 
 # -----------------------------------------------------------------------------
-# KNOWLEDGE BASE
-# For each attack type we store the security knowledge a human analyst has:
-#   - what the attacker is trying to achieve
-#   - why it is dangerous (the business impact)
-#   - how urgently it must be handled
+# MITRE ATT&CK technique mapping (verified against attack.mitre.org)
+# -----------------------------------------------------------------------------
+MITRE_MAP = {
+    "Brute Force Attack": {
+        "id": "T1110",
+        "name": "Brute Force",
+        "tactic": "Credential Access",
+        "url": "https://attack.mitre.org/techniques/T1110/",
+    },
+    "Credential Stuffing": {
+        "id": "T1110.004",
+        "name": "Brute Force: Credential Stuffing",
+        "tactic": "Credential Access",
+        "url": "https://attack.mitre.org/techniques/T1110/004/",
+    },
+    "Password Spraying": {
+        "id": "T1110.003",
+        "name": "Brute Force: Password Spraying",
+        "tactic": "Credential Access",
+        "url": "https://attack.mitre.org/techniques/T1110/003/",
+    },
+    "Impossible Travel": {
+        "id": "T1078",
+        "name": "Valid Accounts",
+        "tactic": "Initial Access / Persistence",
+        "url": "https://attack.mitre.org/techniques/T1078/",
+    },
+    "Port Scanning": {
+        "id": "T1046",
+        "name": "Network Service Discovery",
+        "tactic": "Discovery",
+        "url": "https://attack.mitre.org/techniques/T1046/",
+    },
+    # "Anomalous Activity (AI)" is deliberately unmapped: it is a statistical
+    # outlier, not a recognised adversary technique.
+}
+
+
+# -----------------------------------------------------------------------------
+# Security knowledge base: what a human analyst knows about each attack.
 # -----------------------------------------------------------------------------
 ATTACK_KNOWLEDGE = {
     "Brute Force Attack": {
@@ -70,14 +101,7 @@ ATTACK_KNOWLEDGE = {
 
 
 def _risk_reason(alert) -> str:
-    """
-    Explain WHY the alert landed in its risk band.
-
-    Our risk bands (from the CO2 design report):
-        0-30   = Low
-        31-70  = Medium
-        71-100 = High
-    """
+    """Explain WHY the alert landed in its risk band (0-30 Low, 31-70 Medium, 71-100 High)."""
     score = alert.risk_score
     if score >= 71:
         return (f"The final risk score is {score}/100, which falls in the HIGH band "
@@ -91,26 +115,21 @@ def _risk_reason(alert) -> str:
 
 def _ai_reason(alert) -> str:
     """
-    Explain what the Isolation Forest (our unsupervised ML model) contributed.
-
-    We read the anomaly score that ai_engine.py appended to the evidence text
-    in the format:  "... | AI anomaly score: 0.79"
+    Explain what the Isolation Forest contributed, including WHICH behaviours
+    drove the decision (from SHAP attribution).
     """
     evidence = alert.evidence or ""
     marker = "AI anomaly score:"
 
-    # If the AI never scored this alert, say so honestly.
     if marker not in evidence:
         return ("The machine-learning layer did not contribute a score to this alert; "
                 "the detection came from the rule engine alone.")
 
-    # Pull the number out of the evidence string.
     try:
         score = float(evidence.split(marker)[1].strip().split()[0])
     except (IndexError, ValueError):
         return "The machine-learning anomaly score for this alert could not be read."
 
-    # Translate the 0.00 - 1.00 number into plain language.
     if score >= 0.80:
         verdict = (f"The Isolation Forest model rated this source {score:.2f} out of 1.00 - "
                    f"extremely unusual compared with all other traffic. The rule engine and "
@@ -126,37 +145,32 @@ def _ai_reason(alert) -> str:
                    f"a risk score but can never overrule a confirmed rule detection. "
                    f"(Example: impossible travel is a per-USER anomaly, which a per-IP model "
                    f"cannot see.)")
+
+    # SHAP attribution: name the behaviours that drove the model's decision.
+    if "AI drivers:" in evidence:
+        drivers = evidence.split("AI drivers:")[1].strip()
+        verdict += f" The features that contributed most to this decision were: {drivers}."
+
     return verdict
 
 
 def generate_explanation(alert) -> dict:
-    """
-    Build the full plain-language explanation for one alert.
-
-    Returns a dictionary with five clearly separated parts so the frontend can
-    display them nicely:
-        headline   - one-line answer to "why is this flagged?"
-        what       - what the attacker appears to be doing
-        why_risky  - the business impact if ignored
-        ai_view    - what the machine-learning model thought
-        action     - the recommended response
-        urgency    - how fast a human should react
-    """
-    # Look up what we know about this attack type. If the type is unknown,
-    # fall back to safe generic wording instead of crashing.
+    """Build the full plain-language explanation for one alert."""
     knowledge = ATTACK_KNOWLEDGE.get(alert.attack_type, {
         "goal": "perform suspicious activity against our systems",
         "danger": "the behaviour deviates from normal usage patterns",
         "urgency": "Review",
     })
 
-    # Build a readable "target" phrase, e.g. "from 192.168.1.20 against account 'admin'".
+    # Build a readable target phrase, e.g. "from 192.168.1.20 against account 'admin'".
     target = ""
     if alert.source_ip:
         target += f"from {alert.source_ip}"
     if alert.username:
         target += f" against the account '{alert.username}'"
     target = target.strip() or "in the analysed logs"
+
+    mitre = MITRE_MAP.get(alert.attack_type)
 
     return {
         "headline": (f"This is a {alert.risk_level.upper()} risk "
@@ -166,4 +180,5 @@ def generate_explanation(alert) -> dict:
         "ai_view": _ai_reason(alert),
         "action": alert.recommendation,
         "urgency": knowledge["urgency"],
+        "mitre": mitre,   # None when the attack type has no ATT&CK equivalent
     }
