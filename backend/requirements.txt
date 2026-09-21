@@ -1,22 +1,17 @@
-# SentinelAI backend - Python packages
-# Week 1 needs only the first two. The rest are listed (commented) so you
-# know what's coming. Uncomment them when the roadmap reaches that week.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic[email]>=2.9
+python-multipart>=0.0.12
 
-fastapi==0.111.0
-uvicorn[standard]==0.30.1
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
 
-# --- Week 2-3: database + auth ---
-# sqlalchemy==2.0.30
-# psycopg2-binary==2.9.9
-# python-jose[cryptography]==3.3.0
-# passlib[bcrypt]==1.7.4
-# python-multipart==0.0.9
+bcrypt>=4.2
+PyJWT>=2.9
 
-# --- Week 5: AI / ML detection ---
-# scikit-learn==1.5.0
-# pandas==2.2.2
-# numpy==1.26.4
-# xgboost==2.0.3
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.5
+shap>=0.46
 
-# --- Week 7: PDF reports ---
-# reportlab==4.2.0
+reportlab>=4.2
