@@ -1,24 +1,43 @@
 # detection.py
-# The core detection engine: five rule-based "detectives", one per attack type.
+# =============================================================================
+# The core detection engine: rule-based "detectives", one per attack type.
+#
+# SEVERITY DESIGN:
+#   High   (71-100) - confirmed attack patterns needing immediate action
+#   Medium (31-70)  - suspicious activity that must be reviewed
+#   Low    (0-30)   - informational findings worth noting, not alarming
+#
+#   The lower-severity detectors at the end exist so the system reports the
+#   full severity spectrum rather than only critical findings, which is how a
+#   real SOC triages: not everything unusual is an emergency.
+# =============================================================================
 
 from collections import defaultdict
+
 from sqlalchemy.orm import Session
 
 import models
 
-# --- Tunable thresholds (easy to adjust later) ---
+# --- Tunable thresholds ------------------------------------------------------
 BRUTE_FORCE_FAILS = 5        # >= this many failed logins...
-BRUTE_FORCE_WINDOW = 60      # ...within this many seconds, same IP + same account
+BRUTE_FORCE_WINDOW = 60      # ...within this many seconds, same IP + account
 STUFFING_USERS = 5           # >= this many DIFFERENT usernames failed...
 STUFFING_WINDOW = 600        # ...within 10 minutes, same IP
 SPRAY_USERS = 5              # same password tried on >= this many accounts...
 SPRAY_WINDOW = 600           # ...within 10 minutes
-TRAVEL_WINDOW = 3600         # two-country logins within 60 minutes = impossible travel
+TRAVEL_WINDOW = 3600         # two-country logins within 60 minutes
 PORTSCAN_PORTS = 10          # >= this many distinct ports...
 PORTSCAN_WINDOW = 120        # ...within 2 minutes, same IP
 
+# --- Lower-severity thresholds ----------------------------------------------
+SUSPICIOUS_FAILS = 3         # >= this many failed logins...
+SUSPICIOUS_WINDOW = 900      # ...within 15 minutes (too slow to be brute force)
+OFFHOURS_START = 0           # successful logins between these hours are
+OFFHOURS_END = 5             # outside normal working time
 
-def _add_alert(db, attack_type, source_ip, username, risk_level, risk_score, evidence, recommendation):
+
+def _add_alert(db, attack_type, source_ip, username, risk_level, risk_score,
+               evidence, recommendation):
     db.add(models.Alert(
         attack_type=attack_type, source_ip=source_ip, username=username,
         risk_level=risk_level, risk_score=risk_score,
@@ -26,6 +45,9 @@ def _add_alert(db, attack_type, source_ip, username, risk_level, risk_score, evi
     ))
 
 
+# =============================================================================
+# HIGH SEVERITY DETECTORS
+# =============================================================================
 def detect_brute_force(db, logs):
     """Same IP fails login on the SAME account many times, fast."""
     found = 0
@@ -60,7 +82,7 @@ def detect_credential_stuffing(db, logs):
             times = sorted(e.event_time for e in events)
             span = (times[-1] - times[0]).total_seconds()
             sigs = {e.password_sig for e in events if e.password_sig}
-            if span <= STUFFING_WINDOW and len(sigs) > 1:  # different passwords => stuffing
+            if span <= STUFFING_WINDOW and len(sigs) > 1:
                 _add_alert(db, "Credential Stuffing", ip, None, "High", 85,
                     f"{ip} attempted {len(users)} different accounts "
                     f"({', '.join(sorted(users))}) in {int(span)}s with varied passwords",
@@ -111,6 +133,9 @@ def detect_impossible_travel(db, logs):
     return found
 
 
+# =============================================================================
+# MEDIUM SEVERITY DETECTORS
+# =============================================================================
 def detect_port_scan(db, logs):
     """Same IP touches many different ports very quickly."""
     found = 0
@@ -132,9 +157,70 @@ def detect_port_scan(db, logs):
     return found
 
 
+def detect_suspicious_failed_logins(db, logs):
+    """
+    Several failed logins on one account that are too few or too slow to be a
+    brute-force attack. Often a user who forgot their password - but it can also
+    be a careful attacker deliberately staying under the detection threshold,
+    which is exactly why it is worth surfacing at MEDIUM rather than ignoring.
+    """
+    found = 0
+    groups = defaultdict(list)
+    for e in logs:
+        if e.event_type == "login_failed" and e.username:
+            groups[(e.source_ip, e.username)].append(e.event_time)
+
+    for (ip, user), times in groups.items():
+        times.sort()
+        # Skip anything the brute-force detector already reported.
+        already = any(
+            (times[i + BRUTE_FORCE_FAILS - 1] - times[i]).total_seconds() <= BRUTE_FORCE_WINDOW
+            for i in range(len(times) - BRUTE_FORCE_FAILS + 1)
+        )
+        if already or len(times) < SUSPICIOUS_FAILS:
+            continue
+
+        span = (times[-1] - times[0]).total_seconds()
+        if span <= SUSPICIOUS_WINDOW:
+            _add_alert(db, "Suspicious Failed Logins", ip, user, "Medium", 45,
+                f"{len(times)} failed logins on account '{user}' from {ip} over "
+                f"{int(span)}s - below the brute-force threshold but still unusual",
+                f"Review recent activity for '{user}' and consider requiring MFA.")
+            found += 1
+    return found
+
+
+# =============================================================================
+# LOW SEVERITY DETECTOR
+# =============================================================================
+def detect_offhours_login(db, logs):
+    """
+    A successful login in the middle of the night. On its own this is not an
+    attack - staff do work late - so it is reported as LOW and informational.
+    It matters because compromised credentials are frequently used off-hours,
+    and because it gives the analyst context when correlating other findings.
+    One alert per account keeps the noise down.
+    """
+    found = 0
+    seen = set()
+    for e in sorted(logs, key=lambda x: x.event_time):
+        if (e.event_type == "login_success" and e.username
+                and OFFHOURS_START <= e.event_time.hour < OFFHOURS_END
+                and e.username not in seen):
+            seen.add(e.username)
+            _add_alert(db, "Off-Hours Login", e.source_ip, e.username, "Low", 20,
+                f"'{e.username}' signed in successfully at "
+                f"{e.event_time.strftime('%H:%M')} from {e.source_ip}, "
+                f"outside normal working hours",
+                f"Confirm with '{e.username}' that this access was expected.")
+            found += 1
+    return found
+
+
+# =============================================================================
 def run_all(db: Session):
     """Run every detector against all stored logs. Returns a summary."""
-    db.query(models.Alert).delete()  # fresh run each time (MVP behaviour)
+    db.query(models.Alert).delete()      # fresh run each time (MVP behaviour)
     logs = db.query(models.LogEntry).all()
     summary = {
         "brute_force": detect_brute_force(db, logs),
@@ -142,6 +228,8 @@ def run_all(db: Session):
         "password_spraying": detect_password_spraying(db, logs),
         "impossible_travel": detect_impossible_travel(db, logs),
         "port_scan": detect_port_scan(db, logs),
+        "suspicious_failed_logins": detect_suspicious_failed_logins(db, logs),
+        "offhours_login": detect_offhours_login(db, logs),
     }
     db.commit()
     summary["total_alerts"] = sum(summary.values())

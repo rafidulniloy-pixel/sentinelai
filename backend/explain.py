@@ -11,10 +11,8 @@
 #   instant, and reproducible - the same alert always gives the same wording,
 #   which matters for a security audit trail.
 #
-# NEW - MITRE ATT&CK MAPPING:
-#   Each attack type is mapped to its official ATT&CK technique ID. ATT&CK is
-#   the industry-standard catalogue of adversary behaviour, so this lets our
-#   alerts be cross-referenced with professional tooling and threat reports.
+# MITRE ATT&CK MAPPING: each attack type carries its official technique ID so
+#   alerts can be cross-referenced with professional tooling and threat reports.
 # =============================================================================
 
 
@@ -23,34 +21,40 @@
 # -----------------------------------------------------------------------------
 MITRE_MAP = {
     "Brute Force Attack": {
-        "id": "T1110",
-        "name": "Brute Force",
-        "tactic": "Credential Access",
+        "id": "T1110", "name": "Brute Force", "tactic": "Credential Access",
         "url": "https://attack.mitre.org/techniques/T1110/",
     },
     "Credential Stuffing": {
-        "id": "T1110.004",
-        "name": "Brute Force: Credential Stuffing",
+        "id": "T1110.004", "name": "Brute Force: Credential Stuffing",
         "tactic": "Credential Access",
         "url": "https://attack.mitre.org/techniques/T1110/004/",
     },
     "Password Spraying": {
-        "id": "T1110.003",
-        "name": "Brute Force: Password Spraying",
+        "id": "T1110.003", "name": "Brute Force: Password Spraying",
         "tactic": "Credential Access",
         "url": "https://attack.mitre.org/techniques/T1110/003/",
     },
     "Impossible Travel": {
-        "id": "T1078",
-        "name": "Valid Accounts",
+        "id": "T1078", "name": "Valid Accounts",
         "tactic": "Initial Access / Persistence",
         "url": "https://attack.mitre.org/techniques/T1078/",
     },
     "Port Scanning": {
-        "id": "T1046",
-        "name": "Network Service Discovery",
-        "tactic": "Discovery",
+        "id": "T1046", "name": "Network Service Discovery", "tactic": "Discovery",
         "url": "https://attack.mitre.org/techniques/T1046/",
+    },
+    # Sub-threshold password guessing is still the Brute Force technique - it is
+    # simply being attempted slowly enough to evade a naive detector.
+    "Suspicious Failed Logins": {
+        "id": "T1110", "name": "Brute Force", "tactic": "Credential Access",
+        "url": "https://attack.mitre.org/techniques/T1110/",
+    },
+    # Off-hours access is use of legitimate credentials, so it maps to Valid
+    # Accounts. It is informational, not proof of compromise.
+    "Off-Hours Login": {
+        "id": "T1078", "name": "Valid Accounts",
+        "tactic": "Initial Access / Persistence",
+        "url": "https://attack.mitre.org/techniques/T1078/",
     },
     # "Anomalous Activity (AI)" is deliberately unmapped: it is a statistical
     # outlier, not a recognised adversary technique.
@@ -58,7 +62,7 @@ MITRE_MAP = {
 
 
 # -----------------------------------------------------------------------------
-# Security knowledge base: what a human analyst knows about each attack.
+# Security knowledge base: what a human analyst knows about each finding.
 # -----------------------------------------------------------------------------
 ATTACK_KNOWLEDGE = {
     "Brute Force Attack": {
@@ -91,6 +95,22 @@ ATTACK_KNOWLEDGE = {
                   "a real attack shortly afterwards",
         "urgency": "Elevated",
     },
+    "Suspicious Failed Logins": {
+        "goal": "sign in to an account without knowing the correct password",
+        "danger": "this is most often a member of staff who has forgotten their password, but "
+                  "it looks identical to a patient attacker deliberately guessing slowly to "
+                  "stay beneath the brute-force alarm - which is exactly why it is worth a look "
+                  "rather than being ignored",
+        "urgency": "Review",
+    },
+    "Off-Hours Login": {
+        "goal": "sign in using valid credentials outside normal working hours",
+        "danger": "on its own this is NOT an attack - staff legitimately work late. It is "
+                  "recorded because stolen credentials are frequently used at night when nobody "
+                  "is watching, so it is useful context if other alerts appear for the same "
+                  "account",
+        "urgency": "Informational",
+    },
     "Anomalous Activity (AI)": {
         "goal": "unknown - this behaviour did not match any known attack rule",
         "danger": "the machine-learning model found this source statistically unusual compared "
@@ -99,9 +119,13 @@ ATTACK_KNOWLEDGE = {
     },
 }
 
+# Findings that are informational rather than adversarial. Their explanations
+# must not accuse anyone of attacking, or the wording is simply wrong.
+NON_ADVERSARIAL = {"Off-Hours Login"}
+
 
 def _risk_reason(alert) -> str:
-    """Explain WHY the alert landed in its risk band (0-30 Low, 31-70 Medium, 71-100 High)."""
+    """Explain WHY the alert landed in its band (0-30 Low, 31-70 Medium, 71-100 High)."""
     score = alert.risk_score
     if score >= 71:
         return (f"The final risk score is {score}/100, which falls in the HIGH band "
@@ -110,7 +134,8 @@ def _risk_reason(alert) -> str:
         return (f"The final risk score is {score}/100, which falls in the MEDIUM band "
                 f"(31-70). Medium-risk alerts should be reviewed, not ignored.")
     return (f"The final risk score is {score}/100, which falls in the LOW band "
-            f"(0-30). This is likely routine activity worth monitoring.")
+            f"(0-30). This is informational: worth noting for context, but not alarming "
+            f"on its own.")
 
 
 def _ai_reason(alert) -> str:
@@ -146,7 +171,6 @@ def _ai_reason(alert) -> str:
                    f"(Example: impossible travel is a per-USER anomaly, which a per-IP model "
                    f"cannot see.)")
 
-    # SHAP attribution: name the behaviours that drove the model's decision.
     if "AI drivers:" in evidence:
         drivers = evidence.split("AI drivers:")[1].strip()
         verdict += f" The features that contributed most to this decision were: {drivers}."
@@ -162,7 +186,7 @@ def generate_explanation(alert) -> dict:
         "urgency": "Review",
     })
 
-    # Build a readable target phrase, e.g. "from 192.168.1.20 against account 'admin'".
+    # Readable target phrase, e.g. "from 192.168.1.20 against account 'admin'".
     target = ""
     if alert.source_ip:
         target += f"from {alert.source_ip}"
@@ -170,15 +194,22 @@ def generate_explanation(alert) -> dict:
         target += f" against the account '{alert.username}'"
     target = target.strip() or "in the analysed logs"
 
-    mitre = MITRE_MAP.get(alert.attack_type)
+    # Informational findings must not be described as an attack.
+    if alert.attack_type in NON_ADVERSARIAL:
+        headline = (f"This is a {alert.risk_level.upper()} risk "
+                    f"{alert.attack_type} observed {target.replace('against the account', 'for the account')}.")
+        what = f"A user appears to {knowledge['goal']}."
+    else:
+        headline = (f"This is a {alert.risk_level.upper()} risk "
+                    f"{alert.attack_type} detected {target}.")
+        what = f"The attacker appears to be trying to {knowledge['goal']}."
 
     return {
-        "headline": (f"This is a {alert.risk_level.upper()} risk "
-                     f"{alert.attack_type} detected {target}."),
-        "what": f"The attacker appears to be trying to {knowledge['goal']}.",
+        "headline": headline,
+        "what": what,
         "why_risky": f"This matters because {knowledge['danger']}. {_risk_reason(alert)}",
         "ai_view": _ai_reason(alert),
         "action": alert.recommendation,
         "urgency": knowledge["urgency"],
-        "mitre": mitre,   # None when the attack type has no ATT&CK equivalent
+        "mitre": MITRE_MAP.get(alert.attack_type),
     }
