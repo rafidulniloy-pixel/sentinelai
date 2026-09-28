@@ -29,3 +29,4 @@ Thumbs.db
 data/
 uploads/
 *.db*.backup
+*.pcap_ISCX.csv
