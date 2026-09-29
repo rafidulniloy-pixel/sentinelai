@@ -250,3 +250,6 @@ def download_report(
             "Content-Disposition": "attachment; filename=SentinelAI_Incident_Report.pdf"
         },
     )
+
+from live import router as live_router
+app.include_router(live_router)

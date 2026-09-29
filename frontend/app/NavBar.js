@@ -46,6 +46,15 @@ export default function NavBar() {
           </svg>
           Upload logs
         </button>
+        <button
+          className={`navlink ${pathname === "/live" ? "on" : ""}`}
+          onClick={() => router.push("/live")}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M3 12h4l3-8 4 16 3-8h4" />
+          </svg>
+          Live
+        </button>
       </div>
 
       <div className="navright">
